@@ -40,17 +40,29 @@
   const MESSAGING = firebase.messaging();
   const VAPID_KEY = "vCz4ZR9hZnTw-utvXvC7dI0-CdCm-p64dITWUes2RxA";
 
-  // Enregistrement du Service Worker pour les notifications push
+  // Service Worker inline
+  const SW_CODE = [
+    "importScripts('https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js');",
+    "importScripts('https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging-compat.js');",
+    "firebase.initializeApp({apiKey:'AIzaSyCM1r38ceXGQz7az9CRhHRZyvTrdhkTVIQ',authDomain:'andiamocdm26.firebaseapp.com',databaseURL:'https://andiamocdm26-default-rtdb.europe-west1.firebasedatabase.app',projectId:'andiamocdm26',storageBucket:'andiamocdm26.firebasestorage.app',messagingSenderId:'378710185221',appId:'1:378710185221:web:6a5601ffaaac04c6d2136c'});",
+    "const messaging=firebase.messaging();",
+    "messaging.onBackgroundMessage(payload=>{",
+    "  const n=payload.notification||{};",
+    "  self.registration.showNotification(n.title||'Andiamo CDM 2026',{body:n.body||payload.data&&payload.data.msg||'',vibrate:[200,100,200]});",
+    "});"
+  ].join('\n');
+
   async function registerSW() {
     if (!('serviceWorker' in navigator)) return;
     try {
-      await navigator.serviceWorker.register('/Andiamo-CDM2026/firebase-messaging-sw.js', {scope: '/Andiamo-CDM2026/'});
+      const blob = new Blob([SW_CODE], {type: 'application/javascript'});
+      const url = URL.createObjectURL(blob);
+      await navigator.serviceWorker.register(url);
       console.log('SW registered OK');
     } catch(e) { console.log('SW error:', e); }
   }
   registerSW();
 
-  // Demander la permission et récupérer le token FCM
   async function requestNotifPermission(pseudo) {
     try {
       const permission = await Notification.requestPermission();
@@ -64,12 +76,8 @@
     } catch(e) { console.log('FCM error:', e); }
   }
 
-  // Envoyer une notification via Firebase Functions (ou Realtime DB trigger)
   async function sendPushNotification(msg) {
     try {
-      const snap = await DB.ref('wc26/fcm_tokens').once('value');
-      const tokens = snap.val() || {};
-      // On stocke le message dans Firebase — le service worker le récupère
       await DB.ref('wc26/push_queue').push({ msg, ts: Date.now() });
     } catch(e) { console.log('Push:', e); }
   }
@@ -288,7 +296,6 @@ const calcScore = (preds, res, koM, bonusRes) => {
 };
 
 // ── Appel API Claude avec web search pour récupérer les scores
-const CLAUDE_MODEL = "claude-sonnet-4-20250514";
 
 
 // ── Calendrier officiel FIFA 2026 (heures ET = UTC-4)
@@ -551,10 +558,10 @@ function GroupsPage({preds,results,activeGroup,setActiveGroup,onChangePred,sched
   );
 }
 
-function ScorerPlayerPicker({value,onChange}){
+function ScorerPlayerPicker({value,onChange,locked}){
   return(
-    <select value={value} onChange={e=>onChange(e.target.value)}
-      style={{width:"100%",background:"#111b2d",border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:value?"#fff":T.muted,fontFamily:"Inter,sans-serif",fontSize:15,outline:"none",cursor:"pointer"}}>
+    <select value={value} onChange={e=>onChange(e.target.value)} disabled={locked}
+      style={{width:"100%",background:"#111b2d",border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:value?"#fff":T.muted,fontFamily:"Inter,sans-serif",fontSize:15,outline:"none",cursor:locked?"not-allowed":"pointer",opacity:locked?0.6:1}}>
       <option value="">— Choisir un joueur —</option>
       {Object.entries(PLAYERS_BY_TEAM).sort(([a],[b])=>a.localeCompare(b,'fr')).map(([country,players])=>(
           <optgroup key={country} label={`${F[country]||"🏳"} ${country}`}>
@@ -582,6 +589,7 @@ const BonusCard=({icon,title,sub,pts,correct,revealed,children})=>(
 
 function BonusPage({preds,settings,onChangeBonus}){
   const br=settings.bonusResults||{};
+  const locked=settings.bonusLocked;
   const[localW,setLocalW]=useState(preds.bonus?.w||"");
   const[localF,setLocalF]=useState(preds.bonus?.f||"");
   const[localT,setLocalT]=useState(preds.bonus?.t||"");
@@ -595,9 +603,18 @@ function BonusPage({preds,settings,onChangeBonus}){
   return(
     <div style={{paddingTop:20}}>
       <PageTitle sub="Pronostics bonus — à saisir avant le début du tournoi !">PRONOSTICS BONUS</PageTitle>
+      {locked&&(
+        <div style={{background:"#1a0e0e",border:`1px solid ${T.red}66`,borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:20}}>🔒</span>
+          <div>
+            <div style={{fontWeight:600,color:T.red,fontSize:14}}>Bonus verrouillés</div>
+            <div style={{color:T.muted,fontSize:12}}>L'administrateur a clôturé les pronostics bonus. Plus aucune modification possible.</div>
+          </div>
+        </div>
+      )}
       <div style={{display:"flex",flexDirection:"column",gap:16}}>
         <BonusCard icon="🏆" title="Vainqueur du Mondial" sub="Quel pays va soulever la Coupe ?" pts={10} correct={winOk} revealed={!!br.w}>
-          <select value={localW} onChange={e=>{setLocalW(e.target.value);onChangeBonus("w",e.target.value);}} style={{width:"100%",background:"#111b2d",border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:localW?"#fff":T.muted,fontFamily:"Inter,sans-serif",fontSize:15,outline:"none",cursor:"pointer"}}>
+          <select value={localW} onChange={e=>{if(locked)return;setLocalW(e.target.value);onChangeBonus("w",e.target.value);}} disabled={locked} style={{width:"100%",background:"#111b2d",border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:localW?"#fff":T.muted,fontFamily:"Inter,sans-serif",fontSize:15,outline:"none",cursor:locked?"not-allowed":"pointer",opacity:locked?0.6:1}}>
             <option value="">— Choisir un pays —</option>
             {ALL_TEAMS.map(t=><option key={t} value={t}>{F[t]||"🏳"} {t}</option>)}
           </select>
@@ -605,7 +622,7 @@ function BonusPage({preds,settings,onChangeBonus}){
           {br.w&&<div style={{marginTop:8,padding:"8px 12px",background:T.card2,borderRadius:8,fontSize:13}}>Résultat officiel : <strong style={{color:T.text}}>{F[br.w]||"🏳"} {br.w}</strong></div>}
         </BonusCard>
         <BonusCard icon="🥈" title="Finaliste" sub="Quel pays sera en finale mais perdra ?" pts={8} correct={finOk} revealed={!!br.f}>
-          <select value={localF} onChange={e=>{setLocalF(e.target.value);onChangeBonus("f",e.target.value);}} style={{width:"100%",background:"#111b2d",border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:localF?"#fff":T.muted,fontFamily:"Inter,sans-serif",fontSize:15,outline:"none",cursor:"pointer"}}>
+          <select value={localF} onChange={e=>{if(locked)return;setLocalF(e.target.value);onChangeBonus("f",e.target.value);}} disabled={locked} style={{width:"100%",background:"#111b2d",border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:localF?"#fff":T.muted,fontFamily:"Inter,sans-serif",fontSize:15,outline:"none",cursor:locked?"not-allowed":"pointer",opacity:locked?0.6:1}}>
             <option value="">— Choisir un pays —</option>
             {ALL_TEAMS.map(t=><option key={t} value={t}>{F[t]||"🏳"} {t}</option>)}
           </select>
@@ -613,7 +630,7 @@ function BonusPage({preds,settings,onChangeBonus}){
           {br.f&&<div style={{marginTop:8,padding:"8px 12px",background:T.card2,borderRadius:8,fontSize:13}}>Résultat officiel : <strong style={{color:T.text}}>{F[br.f]||"🏳"} {br.f}</strong></div>}
         </BonusCard>
         <BonusCard icon="🥉" title="Troisième place" sub="Quel pays remportera le match pour la 3ème place ?" pts={4} correct={thrOk} revealed={!!br.t}>
-          <select value={localT} onChange={e=>{setLocalT(e.target.value);onChangeBonus("t",e.target.value);}} style={{width:"100%",background:"#111b2d",border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:localT?"#fff":T.muted,fontFamily:"Inter,sans-serif",fontSize:15,outline:"none",cursor:"pointer"}}>
+          <select value={localT} onChange={e=>{if(locked)return;setLocalT(e.target.value);onChangeBonus("t",e.target.value);}} disabled={locked} style={{width:"100%",background:"#111b2d",border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:localT?"#fff":T.muted,fontFamily:"Inter,sans-serif",fontSize:15,outline:"none",cursor:locked?"not-allowed":"pointer",opacity:locked?0.6:1}}>
             <option value="">— Choisir un pays —</option>
             {ALL_TEAMS.map(t=><option key={t} value={t}>{F[t]||"🏳"} {t}</option>)}
           </select>
@@ -621,7 +638,7 @@ function BonusPage({preds,settings,onChangeBonus}){
           {br.t&&<div style={{marginTop:8,padding:"8px 12px",background:T.card2,borderRadius:8,fontSize:13}}>Résultat officiel : <strong style={{color:T.text}}>{F[br.t]||"🏳"} {br.t}</strong></div>}
         </BonusCard>
         <BonusCard icon="⚽" title="Meilleur buteur" sub="Quel joueur va marquer le plus de buts ?" pts={6} correct={scrOk} revealed={!!br.s}>
-          <ScorerPlayerPicker value={preds.bonus?.s||""} onChange={v=>onChangeBonus("s",v)}/>
+          <ScorerPlayerPicker value={preds.bonus?.s||""} onChange={v=>{if(!locked)onChangeBonus("s",v);}} locked={locked}/>
           {br.s&&<div style={{marginTop:10,padding:"8px 12px",background:T.card2,borderRadius:8,fontSize:13}}>Résultat officiel : <strong style={{color:T.text}}>{br.s}</strong></div>}
         </BonusCard>
       </div>
@@ -1393,6 +1410,34 @@ Si aucun match n'est terminé, réponds : {"results":[]}`;
 
       {adminTab==="settings"&&(
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
+
+          {/* Verrouillages */}
+          <div style={{background:T.card,borderRadius:16,padding:20,border:`1px solid ${T.border}`}}>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:20,fontWeight:700,color:T.gold,marginBottom:14}}>🔒 Verrouillages</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {/* Clôture inscriptions */}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",background:T.card2,borderRadius:10,border:`1px solid ${settings.registrationClosed?T.red+"66":T.border}`}}>
+                <div>
+                  <div style={{fontWeight:600,fontSize:14,color:T.text}}>Inscriptions</div>
+                  <div style={{fontSize:12,color:T.muted,marginTop:2}}>{settings.registrationClosed?"🔴 Clôturées — plus de nouveaux participants":"🟢 Ouvertes — nouveaux participants autorisés"}</div>
+                </div>
+                <button onClick={()=>saveSettings({registrationClosed:!settings.registrationClosed})} style={{background:settings.registrationClosed?T.green:T.red,color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:13,cursor:"pointer",flexShrink:0}}>
+                  {settings.registrationClosed?"Rouvrir":"Clôturer"}
+                </button>
+              </div>
+              {/* Verrouillage bonus */}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",background:T.card2,borderRadius:10,border:`1px solid ${settings.bonusLocked?T.red+"66":T.border}`}}>
+                <div>
+                  <div style={{fontWeight:600,fontSize:14,color:T.text}}>Pronostics bonus</div>
+                  <div style={{fontSize:12,color:T.muted,marginTop:2}}>{settings.bonusLocked?"🔴 Verrouillés — plus de modification possible":"🟢 Ouverts — participants peuvent modifier"}</div>
+                </div>
+                <button onClick={()=>saveSettings({bonusLocked:!settings.bonusLocked})} style={{background:settings.bonusLocked?T.green:T.red,color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:13,cursor:"pointer",flexShrink:0}}>
+                  {settings.bonusLocked?"Déverrouiller":"Verrouiller"}
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div style={{background:T.card,borderRadius:16,padding:20,border:`1px solid ${T.border}`}}>
             <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:20,fontWeight:700,color:T.gold,marginBottom:14}}>Phase du tournoi</div>
             <div style={{display:"flex",gap:10}}>
@@ -1525,8 +1570,14 @@ function App(){
         return;
       }
     } else {
-      // Nouveau joueur → créer le compte avec son mot de passe
-      const np={...players,[name]:{joinedAt:new Date().toISOString()}};
+      // Vérifier si les inscriptions sont clôturées
+      if(settings.registrationClosed){
+        alert("🔒 Les inscriptions sont clôturées. Contactez l'administrateur.");
+        return;
+      }
+      // Récupère la liste FRAÎCHE depuis Firebase (évite d'écraser les autres)
+      const freshPlayers = await sg("players", {});
+      const np = {...freshPlayers, [name]:{joinedAt:new Date().toISOString()}};
       setPlayers(np);
       await ss("players",np);
       await ss(`passwords/${name}`, pwd);
@@ -1566,7 +1617,10 @@ function App(){
 
   const loadLeaderboard=useCallback(async()=>{
     setLbLoading(true);
-    const board=await Promise.all(Object.keys(playersRef.current).map(async p=>{
+    // Toujours recharger la liste fraîche depuis Firebase
+    const freshPlayers = await sg("players", {});
+    setPlayers(freshPlayers);
+    const board=await Promise.all(Object.keys(freshPlayers).map(async p=>{
       const pd=await sg(`predictions/${p}`,{grp:{},ko:{},bonus:{}});
       const score=calcScore(pd,resultsRef.current,koMatchesRef.current,settingsRef.current.bonusResults);
       return{pseudo:p,score,preds:pd};
